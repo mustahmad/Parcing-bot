@@ -54,7 +54,6 @@ class AIEvaluator:
             )
             text = response.choices[0].message.content
 
-            # Парсим ответ
             relevant = "релевантность: да" in text.lower()
             score = self._extract_score(text)
             response_text = self._extract_response(text)
@@ -74,6 +73,43 @@ class AIEvaluator:
                 "analysis": f"[Ошибка AI: {e}]",
                 "response_draft": "",
             }
+
+    async def regenerate(self, order_data: dict, user_instructions: str) -> dict:
+        """Перегенерирует отклик с учётом пожеланий пользователя."""
+        prompt = f"""\
+Заказ:
+— Название: {order_data.get('title', '')}
+— Описание: {order_data.get('description', '')}
+— Бюджет: {order_data.get('budget', 'не указан')} ₽
+— Источник: {order_data.get('source', '')}
+
+Предыдущий отклик:
+{order_data.get('response_draft', '')}
+
+Пожелания к новому отклику:
+{user_instructions}
+
+Мои навыки:
+{self.skills}
+
+Напиши ТОЛЬКО новый отклик (2-4 предложения), без пояснений и заголовков.
+"""
+
+        try:
+            response = await self.client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                max_tokens=300,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            new_draft = response.choices[0].message.content.strip()
+            return {"response_draft": new_draft}
+
+        except Exception as e:
+            log.error("Groq regenerate ошибка: %s", e)
+            return {"response_draft": f"[Ошибка: {e}]"}
 
     @staticmethod
     def _extract_score(text: str) -> int:

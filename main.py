@@ -2,9 +2,12 @@
 """
 Freelance Parser — автоматический поиск заказов на фриланс-биржах.
 
-Парсит Kwork, Habr Freelance, Telegram-каналы.
+Парсит Kwork, FL.ru, Telegram-каналы.
 Оценивает релевантность через Groq AI (Llama 3.3 70B).
-Отправляет горячие заказы с готовым откликом в Telegram-бот.
+Отправляет заказы в Telegram-бот с инлайн-кнопками:
+  ✅ Откликнуться — получить чистый текст для копирования
+  ✏️ Другой отклик — AI перегенерирует с твоими пожеланиями
+  ❌ Пропуск — скрыть заказ
 
 Запуск:
     python main.py              # цикл с интервалом из config.yaml
@@ -23,7 +26,7 @@ from dotenv import load_dotenv
 
 from parsers import KworkParser, FLParser, TelegramChannelParser
 from evaluator import AIEvaluator
-from notifier import TelegramNotifier
+from bot import TelegramBot
 from storage import Storage
 
 load_dotenv()
@@ -33,6 +36,9 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+
 log = logging.getLogger("main")
 
 
@@ -66,7 +72,7 @@ async def process_orders(
     parsers: list,
     storage: Storage,
     evaluator: AIEvaluator,
-    notifier: TelegramNotifier,
+    bot: TelegramBot | None,
     config: dict,
     dry_run: bool = False,
 ) -> int:
@@ -84,17 +90,14 @@ async def process_orders(
             continue
 
         for order in orders:
-            # Пропускаем уже виденные
             if await storage.is_seen(order["id"]):
                 continue
 
             await storage.mark_seen(order["id"], order["source"], order["title"])
 
-            # Фильтр по ключевым словам
             if not matches_keywords(order, keywords):
                 continue
 
-            # Фильтр по минимальному бюджету
             if order.get("budget") and order["budget"] < min_budget:
                 continue
 
@@ -105,7 +108,6 @@ async def process_orders(
                 order.get("budget", "?"),
             )
 
-            # AI-оценка
             evaluation = await evaluator.evaluate(order)
 
             if not evaluation["relevant"]:
@@ -114,9 +116,8 @@ async def process_orders(
 
             log.info("  → AI оценка: %s/10", evaluation.get("score", "?"))
 
-            # Отправка в Telegram
-            if not dry_run:
-                await notifier.send_order(order, evaluation)
+            if not dry_run and bot:
+                await bot.send_order(order, evaluation)
 
             sent += 1
 
@@ -130,10 +131,8 @@ async def main():
     parser.add_argument("--config", default="config.yaml", help="Путь к конфигу")
     args = parser.parse_args()
 
-    # --- Загрузка конфига ---
     config = load_config(args.config)
 
-    # --- Проверка ключей ---
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         log.error("GROQ_API_KEY не задан в .env")
@@ -145,17 +144,27 @@ async def main():
         log.warning("TELEGRAM_BOT_TOKEN не задан — работаем в dry-run режиме")
         args.dry_run = True
 
-    # --- Инициализация ---
+    # --- Init ---
     storage = Storage("seen_orders.db")
     await storage.init()
 
     evaluator = AIEvaluator(api_key=api_key, skills=config.get("your_skills", ""))
-    notifier = TelegramNotifier(token=tg_token, chat_id=tg_chat)
     parsers = build_parsers(config)
 
     if not parsers:
         log.error("Нет включённых источников в config.yaml")
         sys.exit(1)
+
+    # --- Telegram Bot (with inline buttons & callbacks) ---
+    bot = None
+    if not args.dry_run and tg_token and tg_chat:
+        bot = TelegramBot(
+            token=tg_token,
+            chat_id=tg_chat,
+            storage=storage,
+            evaluator=evaluator,
+        )
+        await bot.start()
 
     interval = config.get("check_interval", 600)
 
@@ -165,29 +174,36 @@ async def main():
     log.info("Ключевые слова: %d шт.", len(config["keywords"]))
     log.info("Мин. бюджет: %s ₽", config.get("min_budget", 0))
     log.info("Интервал: %d сек", interval)
-    log.info("Режим: %s", "dry-run" if args.dry_run else "боевой")
+    log.info("Режим: %s", "dry-run" if args.dry_run else "боевой (с кнопками)")
     log.info("=" * 50)
 
-    # --- Основной цикл ---
+    # --- Main loop ---
     cycle = 0
-    while True:
-        cycle += 1
-        log.info("--- Цикл #%d ---", cycle)
+    try:
+        while True:
+            cycle += 1
+            log.info("--- Цикл #%d ---", cycle)
 
-        sent = await process_orders(
-            parsers, storage, evaluator, notifier, config, args.dry_run
-        )
+            sent = await process_orders(
+                parsers, storage, evaluator, bot, config, args.dry_run
+            )
 
-        total_seen = await storage.count()
-        log.info("Отправлено: %d | Всего в базе: %d", sent, total_seen)
+            total_seen = await storage.count()
+            log.info("Отправлено: %d | Всего в базе: %d", sent, total_seen)
 
-        if args.once:
-            break
+            if args.once:
+                if bot:
+                    log.info("Бот слушает кнопки 60 сек (Ctrl+C для выхода)...")
+                    await asyncio.sleep(60)
+                break
 
-        log.info("Сон %d сек до следующей проверки...", interval)
-        await asyncio.sleep(interval)
+            log.info("Сон %d сек до следующей проверки...", interval)
+            await asyncio.sleep(interval)
+    finally:
+        if bot:
+            await bot.stop()
+        await storage.close()
 
-    await storage.close()
     log.info("Завершено.")
 
 
