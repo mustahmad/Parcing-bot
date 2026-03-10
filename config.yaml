@@ -1,0 +1,59 @@
+# === Ключевые слова для фильтрации заказов ===
+keywords:
+  - чат-бот
+  - чатбот
+  - телеграм бот
+  - telegram bot
+  - автоматизация
+  - парсер
+  - парсинг
+  - бот
+  - n8n
+  - make
+  - интеграция
+  - api
+  - лендинг
+  - сайт под ключ
+  - нейросет
+  - нейронн
+  - ии
+  - ai
+  - gpt
+  - claude
+  - openai
+  - python
+  - скрипт
+  - crm
+
+# Минимальный бюджет (₽) — заказы дешевле будут пропущены
+min_budget: 3000
+
+# === Источники ===
+sources:
+  kwork:
+    enabled: true
+    categories:
+      - 41    # Программирование
+      - 155   # Боты и автоматизация
+      - 11    # Сайты под ключ
+
+  fl:
+    enabled: true
+
+  telegram:
+    enabled: false   # включи и заполни TELEGRAM_API_ID / HASH в .env
+    channels:
+      - freelance_orders
+      - thefreeorders
+      - fl_exchange
+
+# Интервал между проверками (секунды)
+check_interval: 600
+
+# === Твои навыки (для AI-оценки и генерации откликов) ===
+your_skills: |
+  Разработка Telegram-ботов, AI-чатботов, автоматизаций на n8n/Make,
+  парсеров, лендингов и веб-приложений. Интеграции с любыми API.
+  Стек: Python, Node.js, React, Next.js, n8n, Make.
+  Опыт работы с Claude API, OpenAI API, Whisper, RAG.
+  Делаю быстро и качественно. Средний срок — 2-3 дня.

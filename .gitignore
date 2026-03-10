@@ -1,0 +1,10 @@
+.env
+*.db
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.session
+*.session-journal
+.vscode/
+.idea/
